@@ -9,6 +9,7 @@ import concurrent.futures
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+from tqdm import tqdm
 
 
 class Colour(Enum):
@@ -351,8 +352,7 @@ def evaluate_agents_parallel(p1_config, p2_config, width: int, height: int, num_
         tasks.append((p1_config, p2_config, width, height, p1_starts))
 
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        results = list(executor.map(_play_single_game_worker, tasks))
-        
+        results = list(tqdm(executor.map(_play_single_game_worker, tasks), total=num_games, leave=False))        
     p1_wins = sum(results)
     return p1_wins / num_games
 
