@@ -5,6 +5,10 @@ import random
 import time
 from typing import Optional, Protocol
 import math
+import concurrent.futures
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
 
 
 class Colour(Enum):
@@ -311,28 +315,164 @@ class MCTSPlayer(Player):
         self.root_node = new_root
 
 
+
+
+
+
+def _create_player(config: dict):
+    if config['type'] == 'MCTS':
+        return MCTSPlayer(config['time_limit'], config['c_coefficient'])
+    elif config['type'] == 'Random':
+        return RandomPlayer()
+
+def _play_single_game_worker(args):
+
+    p1_config, p2_config, width, height, p1_starts = args
+    board = Board(width, height)
+    
+    p1 = _create_player(p1_config)
+    p2 = _create_player(p2_config)
+
+    if p1_starts:
+        game = Game(p1, p2, board)
+        game.run(verbose=False)
+        return 1 if game.winner == Colour.RED else 0
+    else:
+        game = Game(p2, p1, board)
+        game.run(verbose=False)
+        return 1 if game.winner == Colour.BLUE else 0
+
+
+def evaluate_agents_parallel(p1_config, p2_config, width: int, height: int, num_games: int) -> float:
+
+    tasks = []
+    for i in range(num_games):
+        p1_starts = (i % 2 == 0) 
+        tasks.append((p1_config, p2_config, width, height, p1_starts))
+
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        results = list(executor.map(_play_single_game_worker, tasks))
+        
+    p1_wins = sum(results)
+    return p1_wins / num_games
+
+
+
+def experiment_time_limits():
+    times = [0.02, 0.05, 0.1, 0.2, 0.5]
+    baseline_time = 0.05
+    c_coeff = 0.5
+    board_w, board_h = 5, 4
+    num_games = 20 
+    win_rates = []
+    
+    p2_config = {'type': 'MCTS', 'time_limit': baseline_time, 'c_coefficient': c_coeff}
+
+    for t in times:
+        p1_config = {'type': 'MCTS', 'time_limit': t, 'c_coefficient': c_coeff}
+        wr = evaluate_agents_parallel(p1_config, p2_config, board_w, board_h, num_games)
+        win_rates.append(wr)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(times, win_rates)
+    plt.axhline(y=0.5)
+    plt.title("Wynik MCTS w zależności od czasu na ruch")
+    plt.xlabel("time limit (s)")
+    plt.ylabel("Win rate")
+    plt.grid(True)
+    plt.legend()
+    plt.savefig("time_limits.png", bbox_inches='tight', dpi=300)
+
+def experiment_c_coefficient():
+    c_values = [0.1, 0.3, 0.5, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0]
+    time_limit = 0.1
+    board_w, board_h = 4, 4
+    num_games = 20 
+    
+    results = np.zeros((len(c_values), len(c_values)))
+    
+    for i, c1 in enumerate(c_values):
+        for j, c2 in enumerate(c_values):
+            if i == j:
+                results[i, j] = 0.5 
+            else:
+                p1_config = {'type': 'MCTS', 'time_limit': time_limit, 'c_coefficient': c1}
+                p2_config = {'type': 'MCTS', 'time_limit': time_limit, 'c_coefficient': c2}
+                results[i, j] = evaluate_agents_parallel(p1_config, p2_config, board_w, board_h, num_games)
+
+    plt.figure(figsize=(7, 6))
+    sns.heatmap(results, annot=True, cmap="coolwarm", center=0.5, 
+                xticklabels=c_values, yticklabels=c_values, vmin=0, vmax=1)
+    plt.title(f"Heatmap Win Rate\n(time={time_limit}s)")
+    plt.xlabel("c_coefficient Player 2")
+    plt.ylabel("c_coefficient Player 1")
+    plt.savefig("c_coefficient_heatmap.png", bbox_inches='tight', dpi=300)
+
+
+def experiment_board_size():
+    sizes = [(3, 3), (7, 5), (10, 8)]
+    time_limit = 0.1
+    c_coeff = 0.5
+    
+    num_games = 40 
+    
+    win_rates = []
+    board_areas = []
+    
+    p1_config = {'type': 'MCTS', 'time_limit': time_limit, 'c_coefficient': c_coeff}
+    p2_config = {'type': 'Random'}
+
+    for w, h in sizes:
+        
+        wr = evaluate_agents_parallel(p1_config, p2_config, w, h, num_games)
+        win_rates.append(wr)
+        board_areas.append(f"{w}x{h}")
+
+    plt.figure(figsize=(8, 5))
+    plt.bar(board_areas, win_rates, color='g')
+    plt.title(f"Board Size impact on the MCTS win rate\n(time={time_limit}s, c={c_coeff})")
+    plt.xlabel("Board Size")
+    plt.ylabel("Win Rate MCTS")
+    plt.ylim(0, 1.05)
+    for i, v in enumerate(win_rates):
+        plt.text(i, v + 0.02, str(round(v, 2)), ha='center')
+    plt.savefig("board_size.png", bbox_inches='tight', dpi=300)
+
+
 def main() -> None:
-    red_wins = 0
-    blue_wins = 0
 
-    for _ in range(100):
-        board = Board(15, 10)  # (7, 5) TODO: na początek możesz skorzystać z mniejszej planszy (np. 4x4)
-        red_player = MCTSPlayer(0.2, 0.5) # TODO: zastąp jednego z agentów wariantem MCTS
-        # podpowiedź: np. takim `red_player = MCTSPlayer(0.2, 0.5)`
-        blue_player = RandomPlayer()
-        game = Game(red_player, blue_player, board)
-        game.run(verbose=True)  # TODO: jeżeli nie chcesz czytać na konsoli zapisu partii, skorzystaj z `verbose=False`
-
-        if game.winner == Colour.RED:
-            red_wins += 1
-        else:
-            blue_wins += 1
-
-    print(red_wins, blue_wins)  # TODO: jeżeli wszystko poszło dobrze, to agent MCTS powtarzalnie wygrywa z losowym
+    experiment_time_limits()
+    experiment_c_coefficient()
+    experiment_board_size()
 
 
 if __name__ == '__main__':
-    main()  # TODO: jeżeli podstawowy eksperyment zakończył się sukcesem to sprawdź inne jego warianty
-    # podpowiedź:
-    #  * możesz zorganizować pojedynek agentów MCTS o różnych parametrach (np. czasie na wybór akcji)
-    #  * możesz też zmienić rozmiar planszy lub skłonność do eksplorowania (`self.c_coefficient`)
+    main()
+
+
+
+# def main() -> None:
+#     red_wins = 0
+#     blue_wins = 0
+
+#     for _ in range(100):
+#         board = Board(15, 10)  # (7, 5) TODO: na początek możesz skorzystać z mniejszej planszy (np. 4x4)
+#         red_player = MCTSPlayer(0.2, 0.5) # TODO: zastąp jednego z agentów wariantem MCTS
+#         # podpowiedź: np. takim `red_player = MCTSPlayer(0.2, 0.5)`
+#         blue_player = RandomPlayer()
+#         game = Game(red_player, blue_player, board)
+#         game.run(verbose=True)  # TODO: jeżeli nie chcesz czytać na konsoli zapisu partii, skorzystaj z `verbose=False`
+
+#         if game.winner == Colour.RED:
+#             red_wins += 1
+#         else:
+#             blue_wins += 1
+
+#     print(red_wins, blue_wins)  # TODO: jeżeli wszystko poszło dobrze, to agent MCTS powtarzalnie wygrywa z losowym
+
+
+# if __name__ == '__main__':
+#     main()  # TODO: jeżeli podstawowy eksperyment zakończył się sukcesem to sprawdź inne jego warianty
+#     # podpowiedź:
+#     #  * możesz zorganizować pojedynek agentów MCTS o różnych parametrach (np. czasie na wybór akcji)
+#     #  * możesz też zmienić rozmiar planszy lub skłonność do eksplorowania (`self.c_coefficient`)
